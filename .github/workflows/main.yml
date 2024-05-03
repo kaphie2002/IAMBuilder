@@ -1,0 +1,99 @@
+name: cfn-policy-validator-workflow
+
+on:
+  pull_request:
+    types: [opened, review_requested]
+
+  push:
+    branches:
+       - 'main'
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+
+jobs: 
+  cfn-iam-policy-validation: 
+    name: iam-policy-validation
+    runs-on: ubuntu-latest
+    permissions: write-all
+    steps:
+      - name: Checkout code
+        id: checkOut
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        id: configureCreds
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.OIDC_IAM_ROLE }}
+          aws-region: us-east-1
+          role-session-name: GitHubSessionName
+
+      - name: Run AWS AccessAnalyzer ValidatePolicy check
+        id: run-aws-validate-policy
+        uses: aws-actions/cloudformation-aws-iam-policy-validator@v1.0.0
+        with:
+          policy-check-type: 'VALIDATE_POLICY'
+          template-path: './sample-role.yaml'
+          region: us-east-1
+      
+      - name: Print the result for ValidatePolicy
+        if: success() || failure()
+        run: echo "${{ steps.run-aws-validate-policy.outputs.result }}"
+
+      - name: Fetch critical actions from s3
+        id: getCriticalActions
+        run: |
+          echo "actionsLst=$(aws s3 cp ${{ secrets.CRITICAL_ACTIONS }} -)"  >> $GITHUB_OUTPUT
+        shell: bash
+        
+      - name: Fetch reference policy from s3
+        id: getReferencePolicy
+        run: |
+          aws s3 cp ${{ secrets.REFERENCE_IDENTITY_POLICY }} ./reference-identity-policy.json
+        shell: bash
+        
+      - name: Run AWS AccessAnalyzer CheckAccessNotGranted check
+        id: run-aws-check-access-not-granted
+        uses: aws-actions/cloudformation-aws-iam-policy-validator@v1.0.0
+        with:
+          policy-check-type: 'CHECK_ACCESS_NOT_GRANTED'
+          template-path: './sample-role.yaml'
+          actions: ${{ steps.getCriticalActions.outputs.actionsLst }}
+          region: us-east-1
+          
+      - name: Run AWS AccessAnalyzer CheckNoNewAccess check
+        id: run-aws-check-no-new-access
+        uses: aws-actions/cloudformation-aws-iam-policy-validator@v1.0.0
+        with:
+          policy-check-type: 'CHECK_NO_NEW_ACCESS'
+          template-path: './sample-role.yaml'
+          reference-policy: './reference-identity-policy.json'
+          reference-policy-type: "IDENTITY"
+          region: us-east-1
+
+      - name: post-results-to-comment
+        if: success() && github.event_name == 'pull_request' || failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '*${{ steps.run-aws-validate-policy.outputs.result }}'
+            }) 
+
+  cfn-template-deploy:
+    if: github.branch == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Deploy to AWS CloudFormation
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: MyStack
+          template: sample-role.yaml

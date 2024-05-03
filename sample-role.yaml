@@ -1,0 +1,35 @@
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Base stack to create a simple role
+Resources:
+  SampleIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: "*"
+            Action: ["sts:AssumeRole"]
+      Path: /      
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Resource: "*"
+                Effect: Allow
+                Action:
+                - 'ec2:RunInstances'
+                - 'lambda:CreateFunction'
+                - 'lambda:InvokeFunction'
+                - 'dynamodb:Scan'
+                - 'dynamodb:Query'
+                - 'dynamodb:UpdateItem'
+                - 'dynamodb:GetItem'
+                - 'dynamodb:DeleteTable'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'iam:PassRole'
+                Resource: "arn:aws:iam::*:role/my-custom-role"
